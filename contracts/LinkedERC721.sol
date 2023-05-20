@@ -24,6 +24,10 @@ contract LinkedERC721 is ERC721, AxelarExecutable, Upgradable {
     gasService = IAxelarGasService(gasReceiver_);
   }
 
+  function mint(uint256 tokenId) external {
+    _safeMint(_msgSender(), tokenId);
+  }
+
   function _setup(bytes calldata params) internal override {
     string memory chainName_ = abi.decode(params, (string));
     if (bytes(chainName).length != 0) revert AlreadyInitialized();
@@ -77,7 +81,7 @@ contract LinkedERC721 is ERC721, AxelarExecutable, Upgradable {
   }
 
   function _execute(
-    string calldata,
+    string calldata sourceChain,
     string calldata sourceAddress,
     bytes calldata payload
   ) internal override {

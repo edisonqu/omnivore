@@ -50,13 +50,13 @@ contract Marketplace is AxelarExecutable, Upgradable {
 
   IAxelarGasService immutable gasService;
   string public chainName;
-  IERC20 public immutable usdc;
+  string public immutable symbol;
   mapping(address => mapping(uint256 => Listing)) private listings;
 
   
-  constructor(address gateway_, address gasReceiver_, address usdc_) AxelarExecutable(gateway_) {
+  constructor(address gateway_, address gasReceiver_, string memory symbol_) AxelarExecutable(gateway_) {
     gasService = IAxelarGasService(gasReceiver_);
-    usdc = IERC20(usdc_);
+    symbol = symbol_;
   }
   
   function _setup(bytes calldata params) internal override {
@@ -77,10 +77,7 @@ contract Marketplace is AxelarExecutable, Upgradable {
   }
 
   modifier isListed(address nftAddress, uint256 tokenId) {
-    Listing memory listing = listings[nftAddress][tokenId];
-    if (listing.price <= 0) {
-      revert NotListed(nftAddress, tokenId);
-    }
+    require(isListed(nftAddress, tokenId));
     _;
   }
 
@@ -97,6 +94,11 @@ contract Marketplace is AxelarExecutable, Upgradable {
     _;
   }
 
+  function isListed(address nftAddress, uint256 tokenId) public pure returns (bool isListed) {
+    Listing memory listing = listings[nftAddress][tokenId];
+    return listing.price > 0;
+  }
+
   /*
     * @notice Method for listing NFT
     * @param nftAddress Address of NFT contract
@@ -107,11 +109,7 @@ contract Marketplace is AxelarExecutable, Upgradable {
     address nftAddress,
     uint256 tokenId,
     uint256 price
-  )
-    external
-    notListed(nftAddress, tokenId)
-    isOwner(nftAddress, tokenId, msg.sender)
-  { 
+  ) external notListed(nftAddress, tokenId) isOwner(nftAddress, tokenId, msg.sender) { 
     if (price <= 0) {
       revert PriceMustBeAboveZero();
     }
@@ -129,11 +127,10 @@ contract Marketplace is AxelarExecutable, Upgradable {
     * @param nftAddress Address of NFT contract 
     * @param tokenId Token ID of NFT
   */
-  function cancelListing(address nftAddress, uint256 tokenId)
-    external
-    isOwner(nftAddress, tokenId, msg.sender)
-    isListed(nftAddress, tokenId)
-  {
+  function cancelListing(
+    address nftAddress, 
+    uint256 tokenId
+  ) external isOwner(nftAddress, tokenId, msg.sender) isListed(nftAddress, tokenId) {
     delete (listings[nftAddress][tokenId]);
     emit ItemCanceled(msg.sender, nftAddress, tokenId);
   }
@@ -143,15 +140,104 @@ contract Marketplace is AxelarExecutable, Upgradable {
     * @param nftAddress Address of NFT contract 
     * @param tokenId Token ID of NFT
   */ 
-  function buyItem(address nftAddress, uint256 tokenId)
-    external
-    isListed(nftAddress, tokenId)
+  function buyItem(
+    address nftAddress, 
+    uint256 tokenId
+  ) external isListed(nftAddress, tokenId)
   {
     Listing memory listedItem = listings[nftAddress][tokenId];
-    usdc.transferFrom(msg.sender, listedItem.seller, listedItem.price);
+    address tokenAddress = gateway.tokenAddresses(symbol);
+    IERC20(tokenAddress).transferFrom(msg.sender, listedItem.seller, listedItem.price);
     ILinkedERC721(nftAddress).safeTransferFrom(listedItem.seller, msg.sender, tokenId);
     emit ItemBought(msg.sender, nftAddress, tokenId, listedItem.price);
   }
+
+  function buyItem(
+    address operator, 
+    address nftOperator,
+    address nftAddress, 
+    uint256 tokenId, 
+    string memory destinationChain, 
+    address destinationAddress,
+    uint256 amount
+  ) external payable {
+    if (operator == address(this)) {
+      _buyNative(nftAddress, tokenId);
+    } else {
+      _buyCrossChain(operator, nftOperator, nftAddress, tokenId, destinationChain, destinationAddress, amount);
+    }
+  }
+
+  function _buyNative(address nftAddress, uint256 tokenId) internal {
+    Listing memory listedItem = listings[nftAddress][tokenId];
+    address tokenAddress = gateway.tokenAddresses(symbol);
+    IERC20(tokenAddress).transferFrom(msg.sender, listedItem.seller, listedItem.price);
+    ILinkedERC721(nftAddress).safeTransferFrom(listedItem.seller, msg.sender, tokenId);
+    emit ItemBought(msg.sender, nftAddress, tokenId, listedItem.price);
+  }
+
+  function _buyCrossChain(
+    address operator, 
+    address nftOperator, 
+    address nftAddress, 
+    uint256 tokenId, 
+    string destinationChain, 
+    address destinationAddress,
+    uint256 amount,
+  ) internal {
+
+    address tokenAddress = gateway.tokenAddresses(symbol);
+    IERC20(tokenAddress).transferFrom(msg.sender, address(this), amount);
+    IERC20(tokenAddress).approve(address(gateway), amount);
+
+    bytes memory payload = abi.encode(nftAddress, tokenId);
+
+
+    bytes memory payload = abi.encode(nftOperator, nftAddress, tokenId, destinationAddress);
+    string memory stringAddress = address(this).toString();
+
+    gasService.payNativeGasForContractCall{ value: msg.value }(address(this), destinationChain, stringAddress, payload, msg.sender);
+    gateway.callContractWithToken(destinationChain, stringAddress, payload, symbol, amount);
+  }
+
+  function _executeWithToken(
+    string calldata sourceChain,
+    string calldata sourceAddress,
+    bytes calldata payload,
+    string calldata tokenSymbol,
+    uint256 amount
+  ) internal override {
+
+    (address nftAddress, uint256 tokenId) = abi.decode(payload, (address, uint256));
+
+    Listing memory listedItem = listings[nftAddress][tokenId];
+
+    address tokenAddress = gateway.tokenAddresses(tokenSymbol);
+    
+    IERC20(tokenAddress).transfer(listedItem.se)
+
+    // send asset cross chain and buy and send stuff back. 
+    (string memory originalChain, address operator, address nftOperator, address nftAddress, uint256 tokenId, address destinationAddress) = abi.decode(
+      payload,
+      (string, address, address, address, uint256, address)
+    )
+  }
+
+  function _executeWithToken(
+        string calldata,
+        string calldata,
+        bytes calldata payload,
+        string calldata tokenSymbol,
+        uint256 amount
+    ) internal override {
+        address[] memory recipients = abi.decode(payload, (address[]));
+        address tokenAddress = gateway.tokenAddresses(tokenSymbol);
+
+        uint256 sentAmount = amount / recipients.length;
+        for (uint256 i = 0; i < recipients.length; i++) {
+            IERC20(tokenAddress).transfer(recipients[i], sentAmount);
+        }
+    }
 
   /*
     * @notice Method for updating listing 
@@ -163,11 +249,7 @@ contract Marketplace is AxelarExecutable, Upgradable {
     address nftAddress, 
     uint256 tokenId,
     uint256 newPrice
-  )
-    external
-    isListed(nftAddress, tokenId)
-    isOwner(nftAddress, tokenId, msg.sender)
-  { 
+  ) external isListed(nftAddress, tokenId) isOwner(nftAddress, tokenId, msg.sender) { 
     if (newPrice <= 0) {
       revert PriceMustBeAboveZero();
     }
@@ -175,11 +257,7 @@ contract Marketplace is AxelarExecutable, Upgradable {
     emit ItemListed(msg.sender, nftAddress, tokenId, newPrice);
   }
 
-  function getListing(address nftAddress, uint256 tokenId)
-    external
-    view
-    returns (Listing memory)
-  {
+  function getListing(address nftAddress, uint256 tokenId) external view returns (Listing memory) {
     return listings[nftAddress][tokenId];
   }
 
