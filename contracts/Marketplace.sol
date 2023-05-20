@@ -1,18 +1,28 @@
 // SPDX-License-Identifier: Unlicensed
 pragma solidity ^0.8.13;
 
-import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
-import "@openzeppelin/contracts/tokne/ERC20/IERC20.sol";
+import "../interfaces/ILinkedERC721.sol";
+import { IERC20 } from "@axelar-network/axelar-gmp-sdk-solidity/contracts/interfaces/IERC20.sol";
+import { IAxelarGasService } from "@axelar-network/axelar-gmp-sdk-solidity/contracts/interfaces/IAxelarGasService.sol";
+import { IAxelarGateway } from "@axelar-network/axelar-gmp-sdk-solidity/contracts/interfaces/IAxelarGateway.sol";
+import { AxelarExecutable } from "@axelar-network/axelar-gmp-sdk-solidity/contracts/executable/AxelarExecutable.sol";
+import { Upgradable } from "@axelar-network/axelar-gmp-sdk-solidity/contracts/upgradable/Upgradable.sol";
+import { StringToAddress, AddressToString } from "@axelar-network/axelar-gmp-sdk-solidity/contracts/utils/AddressString.sol";
 
-error ItemNotForSale(address nftAddress, uint256 tokenId);
-error NotListed(address nftAddress, uint256 tokenId);
-error AlreadyListed(address nftAddress, uint256 tokenId);
-error NoProceeds();
-error NotOwner();
-error NotApprovedForMarketplace();
-error PriceMustBeAboveZero();
 
-contract Marketplace is Ownable {
+contract Marketplace is AxelarExecutable, Upgradable {
+
+  using StringToAddress for string;
+  using AddressToString for address;
+
+  error AlreadyInitialized();
+  error ItemNotForSale(address nftAddress, uint256 tokenId);
+  error NotListed(address nftAddress, uint256 tokenId);
+  error AlreadyListed(address nftAddress, uint256 tokenId);
+  error NoProceeds();
+  error NotApprovedForMarketplace();
+  error PriceMustBeAboveZero();
+
   struct Listing {
     uint256 price;
     address seller;
@@ -38,11 +48,21 @@ contract Marketplace is Ownable {
     uint256 price
   );
 
+  IAxelarGasService immutable gasService;
+  string public chainName;
   IERC20 public immutable usdc;
   mapping(address => mapping(uint256 => Listing)) private listings;
 
-  constructor(address usdc_) Ownable() {
+  
+  constructor(address gateway_, address gasReceiver_, address usdc_) AxelarExecutable(gateway_) {
+    gasService = IAxelarGasService(gasReceiver_);
     usdc = IERC20(usdc_);
+  }
+  
+  function _setup(bytes calldata params) internal override {
+    string memory chainName_ = abi.decode(params, (string));
+    if (bytes(chainName).length != 0) revert AlreadyInitialized();
+    chainName = chainName_;
   }
 
   modifier notListed(
@@ -69,7 +89,7 @@ contract Marketplace is Ownable {
     uint256 tokenId,
     address spender
   ) {
-    IERC721 nft = IERC721(nftAddress);
+    ILinkedERC721 nft = ILinkedERC721(nftAddress);
     address owner = nft.ownerOf(tokenId);
     if (spender != owner) {
       revert NotOwner();
@@ -96,7 +116,7 @@ contract Marketplace is Ownable {
       revert PriceMustBeAboveZero();
     }
 
-    IERC721 nft = IERC721(nftAddress);
+    ILinkedERC721 nft = ILinkedERC721(nftAddress);
     if (nft.getApproved(tokenId) != address(this)) {
       revert NotApprovedForMarketplace();
     }
@@ -129,7 +149,7 @@ contract Marketplace is Ownable {
   {
     Listing memory listedItem = listings[nftAddress][tokenId];
     usdc.transferFrom(msg.sender, listedItem.seller, listedItem.price);
-    IERC721(nftAddress).safeTransferFrom(listedItem.seller, msg.sender, tokenId);
+    ILinkedERC721(nftAddress).safeTransferFrom(listedItem.seller, msg.sender, tokenId);
     emit ItemBought(msg.sender, nftAddress, tokenId, listedItem.price);
   }
 
@@ -161,5 +181,9 @@ contract Marketplace is Ownable {
     returns (Listing memory)
   {
     return listings[nftAddress][tokenId];
+  }
+
+  function contractId() external pure returns (bytes32) {
+    return keccak256("example");
   }
 }
