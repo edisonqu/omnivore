@@ -81,7 +81,7 @@ contract LinkedERC721 is ERC721, AxelarExecutable, Upgradable {
   }
 
   function _execute(
-    string calldata sourceChain,
+    string calldata,
     string calldata sourceAddress,
     bytes calldata payload
   ) internal override {
