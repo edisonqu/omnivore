@@ -1,9 +1,9 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 
 // import Home from './components/Home';
-// import Profile from './components/Profile';
 import Navbar from "./Components/Navbar";
 import CreateNFT from "./Components/CreateNFT";
+// import Profile from "./Components/Profile";
 
 function App() {
     return (
